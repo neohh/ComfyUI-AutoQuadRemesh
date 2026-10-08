@@ -453,6 +453,99 @@ def extract_clothing_loops_from_image(img_input, mesh_bounds):
         return []
 
 
+def apply_adaptive_semantic_density(verts, quads, target_mesh, collar_y=0.582):
+    """
+    Интеллектуальное адаптивное увеличение плотности (Adaptive Detail Boost):
+    Селективно увеличивает разрешение в 4 раза (Catmull-Clark subdivision)
+    на лице/голове и пальцах/кистях, проецируя новые вершины точно на high-poly поверхность,
+    при этом сохраняя чистые крупные квады на одежде и теле.
+    100% чистая квад-топология (f v1 v2 v3 v4).
+    """
+    def subdivide_quad_patch(v, q):
+        edge_map = {}
+        new_v = list(v)
+        def get_edge_vert(i1, i2):
+            e = tuple(sorted((i1, i2)))
+            if e not in edge_map:
+                edge_v = 0.5 * (v[i1] + v[i2])
+                idx = len(new_v)
+                new_v.append(edge_v)
+                edge_map[e] = idx
+            return edge_map[e]
+        
+        new_quads = []
+        for quad in q:
+            v0, v1, v2, v3 = quad
+            vf = len(new_v)
+            new_v.append(0.25 * (v[v0] + v[v1] + v[v2] + v[v3]))
+            
+            e01 = get_edge_vert(v0, v1)
+            e12 = get_edge_vert(v1, v2)
+            e23 = get_edge_vert(v2, v3)
+            e30 = get_edge_vert(v3, v0)
+            
+            new_quads.append([v0, e01, vf, e30])
+            new_quads.append([e01, v1, e12, vf])
+            new_quads.append([vf, e12, v2, e23])
+            new_quads.append([e30, vf, e23, v3])
+            
+        return np.array(new_v, dtype=np.float32), np.array(new_quads, dtype=np.int32)
+
+    q_centers = np.mean(verts[quads], axis=1)
+
+    # 1. Голова и лицо (выше воротника)
+    is_head = q_centers[:, 1] >= (collar_y - 0.01)
+
+    # 2. Кисть правая (внизу)
+    is_hand_r = (q_centers[:, 0] > 0.30) & (q_centers[:, 1] < 0.25)
+
+    # 3. Кисть левая (поднята) - если не попала в голову
+    is_hand_l = (q_centers[:, 0] < -0.30) & (q_centers[:, 1] > 0.50) & (~is_head)
+
+    # 4. Остальное тело
+    is_body = (~is_head) & (~is_hand_r) & (~is_hand_l)
+
+    refined_verts_list = []
+    refined_quads_list = []
+    total_v_offset = 0
+
+    def process_region(q_mask, subdivide=True):
+        nonlocal total_v_offset
+        region_q = quads[q_mask]
+        if len(region_q) == 0:
+            return None, None
+        used_v = np.unique(region_q)
+        v_map = {old: new for new, old in enumerate(used_v)}
+        local_q = np.vectorize(v_map.get)(region_q)
+        local_v = verts[used_v]
+        
+        if subdivide:
+            sub_v, sub_q = subdivide_quad_patch(local_v, local_q)
+            closest, _, _ = target_mesh.nearest.on_surface(sub_v)
+            final_v = closest.astype(np.float32)
+            final_q = sub_q + total_v_offset
+            total_v_offset += len(final_v)
+            return final_v, final_q
+        else:
+            final_v = local_v
+            final_q = local_q + total_v_offset
+            total_v_offset += len(final_v)
+            return final_v, final_q
+
+    v_h, q_h = process_region(is_head, subdivide=True)
+    v_hr, q_hr = process_region(is_hand_r, subdivide=True)
+    v_hl, q_hl = process_region(is_hand_l, subdivide=True)
+    v_b, q_b = process_region(is_body, subdivide=False)
+
+    parts_v = [p for p in [v_h, v_hr, v_hl, v_b] if p is not None]
+    parts_q = [p for p in [q_h, q_hr, q_hl, q_b] if p is not None]
+
+    all_v = np.vstack(parts_v)
+    all_q = np.vstack(parts_q)
+    print(f"[AutoQuadRemesh] Адаптивное увеличение плотности завершено: лицо и пальцы 4x, итого квадов: {len(all_q)}")
+    return all_v, all_q
+
+
 class AutoQuadRemeshNode:
     @classmethod
     def INPUT_TYPES(s):
@@ -461,6 +554,7 @@ class AutoQuadRemeshNode:
                 "target_quads": ("INT", {"default": 12000, "min": 1000, "max": 50000, "step": 500, "tooltip": "12000 - оптимально: 10-15с расчет, четкие лупы конечностей, пальцев и одежды"}),
                 "shrinkwrap_strength": ("FLOAT", {"default": 0.60, "min": 0.0, "max": 1.0, "step": 0.05, "tooltip": "0.60 = идеальное облегание формы без замятия квадов в складках шорт и одежды"}),
                 "adaptive_scale": ("BOOLEAN", {"default": True, "tooltip": "Плотнее на пальцах, носу и складках, крупнее на теле и ногах"}),
+                "adaptive_detail_boost": ("BOOLEAN", {"default": True, "tooltip": "Интеллектуальное адаптивное увеличение плотности (4x) на лице и пальцах при сохранении чистой крупной сетки на теле"}),
                 "preserve_sharp": ("BOOLEAN", {"default": False, "tooltip": "False = быстрый и гладкий расчет ровных квадов (10-15с); True = фиксация острых механических ребер"}),
                 "show_quad_wireframe": ("BOOLEAN", {"default": True, "tooltip": "Рисовать квадратные грани в 3D вьювере ComfyUI"}),
                 "heal_mesh": ("BOOLEAN", {"default": True, "tooltip": "Щадящая чистка геометрии без повреждения складок одежды"}),
@@ -484,7 +578,8 @@ class AutoQuadRemeshNode:
     FUNCTION = "remesh"
     CATEGORY = "Mesh Processing/Retopology"
 
-    def remesh(self, target_quads=12000, shrinkwrap_strength=0.60, adaptive_scale=True, preserve_sharp=False, show_quad_wireframe=True, heal_mesh=True, relax_iterations=4, filename_prefix="stages_data/03_quad_mesh/asset_quad_local", engine="instant_crossfield", crease_angle=30, separate_fingers=True, mesh=None, image=None, source_glb_file=None, prompt=None, extra_pnginfo=None, **kwargs):
+    def remesh(self, target_quads=12000, shrinkwrap_strength=0.60, adaptive_scale=True, adaptive_detail_boost=True, preserve_sharp=False, show_quad_wireframe=True, heal_mesh=True, relax_iterations=4, filename_prefix="stages_data/03_quad_mesh/asset_quad_local", engine="instant_crossfield", crease_angle=30, separate_fingers=True, mesh=None, image=None, source_glb_file=None, prompt=None, extra_pnginfo=None, **kwargs):
+        adaptive_detail_boost = kwargs.get("adaptive_detail_boost", adaptive_detail_boost)
         # Fallback защиты от некорректных значений из старых кэшированных графов
         if str(engine) not in ["instant_crossfield", "intelligent_custom_retopo", "quadriflow_legacy"]:
             print(f"[AutoQuadRemesh] Warning: engine was '{engine}', falling back to 'instant_crossfield'")
@@ -719,6 +814,12 @@ class AutoQuadRemeshNode:
         if shrinkwrap_strength > 0.0:
             print(f"[AutoQuadRemesh] Final Shrinkwrap projection onto high-poly surface (strength={shrinkwrap_strength})...")
             q_verts = apply_shrinkwrap_projection(q_verts, highpoly_ref, strength=shrinkwrap_strength)
+
+        # 6.5. Интеллектуальное адаптивное уплотнение сетки (Adaptive Detail Boost: Face & Fingers 4x)
+        if adaptive_detail_boost:
+            print("[AutoQuadRemesh] 🧠 Интеллектуальное адаптивное уплотнение сетки (лицо и пальцы 4x)...")
+            collar_y = clothing_loops_dict.get("Collar", 0.582) if clothing_loops_dict else 0.582
+            q_verts, q_faces = apply_adaptive_semantic_density(q_verts, q_faces, highpoly_ref, collar_y=collar_y)
 
         # 7. Quality Monitoring & Diagnostics Report
         print_quality_diagnostics(q_verts, q_faces, highpoly_ref)

@@ -59,6 +59,7 @@ sudo cp instant-meshes /usr/local/bin/
 | `target_quads` | INT | `12000` | Target quad polygon count (10k–14k recommended for full characters). |
 | `shrinkwrap_strength` | FLOAT | `0.60` | Snaps quads back to high-poly shape without pinching fabric folds. |
 | `adaptive_scale` | BOOL | `True` | Higher density on fingers, face, and creases; larger quads on flat body areas. |
+| `adaptive_detail_boost` | BOOL | `True` | **Smart Multi-Resolution Boost:** Selectively increases quad resolution 4x on face & fingers via Catmull-Clark and surface snapping, while keeping clean large quads on body & clothing. |
 | `preserve_sharp` | BOOL | `False` | Locks mechanical sharp edges (best for hard-surface/props). |
 | `show_quad_wireframe` | BOOL | `True` | Renders dark quad wireframe lines in ComfyUI 3D Viewer. |
 | `heal_mesh` | BOOL | `True` | Watertight sealing before solving to prevent holes in cloth folds. |
