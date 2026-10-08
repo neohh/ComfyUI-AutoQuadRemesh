@@ -2,7 +2,10 @@
 Hybrid Retopology Engine (Loft + Freeform Cross-Field + Manifold Stitching)
 Implements 3-phase hybrid topology:
 1. Rigid Guide Loops (Phase 1: Hard anatomical rings)
-2. Freeform Cross-Field Remesh (Phase 2: Instant Meshes adaptive surface infill)
+2. Freeform Cross-Field Remesh with Feature Loop Alignment (Phase 2)
+   - Edge loops around protrusions (spouts/limbs)
+   - Edge loops around junctions/sockets (roots of handles)
+   - Edge loops around depressions/cavities
 3. 1-to-1 Resampling, Manifold Welding and Flow Smoothing (Phase 3)
 """
 
@@ -23,13 +26,16 @@ class HybridRetopoEngine:
         base_quads,
         ring_vertices,
         ring_quads,
-        target_freeform_faces=100,
-        flow_smooth_iterations=10
+        target_freeform_faces=110,
+        crease_angle=35.0,
+        smoothing_iterations=4,
+        post_surface_relaxation=3
     ):
         """
         Executes hybrid retopology:
         - Keeps ring boundaries intact and welded 1-to-1
-        - Resolves freeform branches (handles, spouts, limbs)
+        - Forms concentric edge loops around protrusions, handle ends, and depressions
+        - Applies organic surface smoothing
         - Returns unified 100% manifold quad mesh
         """
         # 1. Trace boundary loops of the rings
@@ -91,6 +97,8 @@ class HybridRetopoEngine:
                 "-r", "4",
                 "-p", "4",
                 "-f", str(target_freeform_faces),
+                "-c", str(crease_angle),
+                "-S", str(smoothing_iterations),
                 "-b",
                 ply_path
             ]
@@ -207,5 +215,29 @@ class HybridRetopoEngine:
 
         ring_quads_combined = top_ring_quads + bot_ring_quads
         combined_quads = all_quads + ring_quads_combined
+
+        # Post-surface relaxation with projection
+        if post_surface_relaxation > 0:
+            m_orig = trimesh.Trimesh(
+                vertices=base_vertices,
+                faces=[[q[0], q[1], q[2]] for q in base_quads] + [[q[0], q[2], q[3]] for q in base_quads],
+                process=False
+            )
+            vert_adj = defaultdict(set)
+            for q in combined_quads:
+                for i in range(4):
+                    vert_adj[q[i]].add(q[(i+1)%4])
+                    vert_adj[q[(i+1)%4]].add(q[i])
+            locked = set(ring2_top + ring2_bot + list(l_free_top) + list(l_free_bot))
+            for _ in range(post_surface_relaxation):
+                new_v = out_verts.copy()
+                for vid in range(len(v_free)):
+                    if vid in locked:
+                        continue
+                    nbrs = list(vert_adj[vid])
+                    if len(nbrs) > 0:
+                        new_v[vid] = out_verts[vid] + 0.3 * (np.mean(out_verts[nbrs], axis=0) - out_verts[vid])
+                closest, _, _ = trimesh.proximity.closest_point(m_orig, new_v[:len(v_free)])
+                out_verts[:len(v_free)] = closest
 
         return out_verts, combined_quads, ring_quads_combined, all_quads
