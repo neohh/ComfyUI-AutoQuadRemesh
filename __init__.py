@@ -5,7 +5,6 @@ import time
 import torch
 import numpy as np
 import trimesh
-import trimesh.smoothing
 import pymeshfix
 import fast_simplification
 import pygltflib
@@ -571,11 +570,6 @@ class AutoQuadRemeshNode:
             v_clean, f_clean = tin.return_arrays()
 
             m_clean = trimesh.Trimesh(vertices=v_clean, faces=f_clean, process=False)
-            
-            # 2.5. Taubin Pre-Smoothing (устранение микро-бугров ткани и паразитных полюсов без усадки объема)
-            print("[AutoQuadRemesh] 🌊 Taubin Pre-Smoothing (сглаживание микро-бугров ткани без потери объема)...")
-            trimesh.smoothing.filter_taubin(m_clean, lamb=0.5, nu=-0.53, iterations=18)
-
             ply_tmp = os.path.join(full_output_folder, f"_temp_{counter}_in.ply")
             obj_tmp = os.path.join(full_output_folder, f"_temp_{counter}_out.obj")
             m_clean.export(ply_tmp)
@@ -588,7 +582,7 @@ class AutoQuadRemeshNode:
                 "-p", "4",
                 "-f", str(coarse_f),
                 "-c", str(crease_angle),
-                "-S", "6",
+                "-S", "2",
                 "-d",
                 "-o", obj_tmp,
                 ply_tmp
