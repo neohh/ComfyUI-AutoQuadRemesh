@@ -56,17 +56,23 @@ sudo cp instant-meshes /usr/local/bin/
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `target_quads` | INT | `12000` | Target quad polygon count (10k–14k recommended for full characters). |
-| `shrinkwrap_strength` | FLOAT | `0.60` | Snaps quads back to high-poly shape without pinching fabric folds. |
-| `adaptive_scale` | BOOL | `True` | Higher density on fingers, face, and creases; larger quads on flat body areas. |
-| `adaptive_detail_boost` | BOOL | `True` | **Smart Multi-Resolution Boost:** Selectively increases quad resolution 4x on face & fingers via Catmull-Clark and surface snapping, while keeping clean large quads on body & clothing. |
+| `target_quads` | INT | `7000` | Target base quad count on body and clothing (~6k–8k for clean League of Legends style topology). |
+| `shrinkwrap_strength` | FLOAT | `0.65` | Snaps quads back to high-poly shape without pinching fabric folds. |
+| `adaptive_detail_boost` | BOOL | `True` | **Neural Adaptive Boost:** AI detects face & fingers on source image -> Geodesic surface Dijkstra -> 4x quad density with seamless 2:1 transition. |
+| `source_image_file` | STRING | `auto` | Name or path of image in `input/` (set to `auto` to automatically find the latest uploaded character photo). |
 | `preserve_sharp` | BOOL | `False` | Locks mechanical sharp edges (best for hard-surface/props). |
-| `show_quad_wireframe` | BOOL | `True` | Renders dark quad wireframe lines in ComfyUI 3D Viewer. |
-| `heal_mesh` | BOOL | `True` | Watertight sealing before solving to prevent holes in cloth folds. |
+| `show_quad_wireframe` | BOOL | `True` | Renders clean quad wireframe lines in ComfyUI 3D Viewer. |
+| `heal_mesh` | BOOL | `True` | Watertight sealing via PyMeshFix before solving to prevent holes in cloth folds. |
 | `relax_iterations` | INT | `4` | Tangential quad relaxation iterations to square up skewed diamonds. |
 | `engine` | LIST | `instant_crossfield` | `instant_crossfield` (ZRemesher-grade), `intelligent_custom_retopo`, `quadriflow_legacy`. |
-| `crease_angle` | INT | `30` | Dihedral angle threshold (degrees) to lock edge loops along clothing seams. |
+| `crease_angle` | INT | `35` | Dihedral angle threshold (degrees) to lock edge loops along clothing seams. |
 | `separate_fingers` | BOOL | `True` | Automatically carves negative space between fused AI fingers. |
+
+## 🖼️ Multi-View Topology Diagnostics
+The node automatically renders a 3-view diagnostic preview directly to ComfyUI output:
+1. **Full Body Overview:** Clean large quads across torso, legs, and clothing.
+2. **Face & Head Zoom:** 4x dense quad loops capturing facial contours, nose, and eyes.
+3. **Hands & Shorts Zoom:** High-density finger cylinders meeting clean shorts hem without seam bleeding.
 
 ---
 
